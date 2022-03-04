@@ -19,6 +19,7 @@ library(plm)
 library(Cairo)
 library(sjPlot)
 library(gridExtra)
+library(plotly)
 ```
 
 
@@ -105,7 +106,7 @@ sapply(covid, function(x) sum(is.na(x)))
 
 # We observe that for no country code we may still have corresponding country information so we could either use the country code or the country name, it wont change the analaysis to be conduted
 
-covid <- covid %>% select(-c(Country_code))
+#covid <- covid %>% select(-c(Country_code))
 ```
 
 ```{r}
@@ -141,6 +142,7 @@ comparision_data <- covid %>% filter(Country %in% countries)
 
 ggplot(comparision_data, aes(x = Date_reported, y = CFR, color = Country)) + geom_line() + scale_x_date(date_breaks = "1 month",date_labels = "%b %Y")+ ggtitle("Plotting various countries CFR across time") + xlab("") + ylab("CFR")+ ylim(0,0.5) + theme_minimal()+ theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
 ```
+
 
 
 ##  Analysis here
@@ -311,6 +313,17 @@ ggplot(final_df, aes(x = Date, y = New_cases , fill = Country)) + geom_bar(stat 
 ```
 
 ```{r}
+latest_df <- final_df %>% filter(Date == "2022-02-01")
+latest_df$Country_code <- c("USA", "RUS", "BGD", "BRA", "CHN", "IND","MEX")
+fig <- plot_geo(latest_df)
+fig <- fig %>% add_trace(
+	z = ~Cumulative_deaths, locations = ~Country_code, text = ~Country, color = ~Cumulative_deaths, colors = "viridis"
+)
+fig <- fig %>% colorbar(title = "Cumulative Deaths")
+fig
+```
+
+```{r}
 cols <- c("school_closing",
 																														"workplace_closing",
 																														"stay_at_home",
@@ -390,8 +403,9 @@ ggplot(final_df_summ, aes(x = as.factor(international_travel), y = avg_CFR, fill
 
 ```{r}
 
-model1 <- plm(avg_CFR ~ vaccine_availability  , data = final_df_summ, index = c("Country","week"), model = "random")
+model1 <- plm(avg_CFR ~ vaccine_availability + income_support + debt_relief + international_travel  , data = final_df_summ, index = c("Country","week"), model = "random")
 
+library(stargazer)
 summary(model1)
 
 coef(model1)
@@ -406,8 +420,10 @@ plot(final_df_summ$avg_CFR)
 resid <- model1$residuals
 fitted_vals <- model1$model[[1]] - resid
 
-ggplot() + geom_point(aes(x = fitted_vals, y = resid))
+ggplot() + geom_point(aes(x = fitted_vals, y = resid)) + ylim(-0.4,0.4)
 ```
+
+
 ```{r}
 qqPlot(model1$residuals)
 qqnorm(model1$residuals, label = "Residuals")
