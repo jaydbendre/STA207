@@ -1,0 +1,271 @@
+---
+title: "STA 207: Assignment II"
+author: "Jay Bendre, 920211348"
+output: html_document
+---
+***
+
+**Instructions** 
+
+A consulting firm is investigating the relationship between wages and some demographic factors. The file `Wage.csv` contains three columns, which are 
+
+  - `wage`, the wage of the subject,
+  - `ethnicity`, the ethnicity of the subject,
+  - and `occupation`, the occupation of the subject. 
+
+
+```{r,echo=T,results=F,message=F, warning=FALSE}
+Wage=read.csv('Wage.csv');
+library(gplots)
+library(lme4)
+library(dplyr)
+library(stats)
+library(knitr)
+library(car)
+library(tidyverse)
+library(broom)
+attach(Wage)
+df <- Wage
+df %>% head()
+```
+
+```{r}
+# Performing necessary preprocessing 
+
+df$ethnicity <- as.factor(df$ethnicity)
+df$occupation <- as.factor(df$occupation)
+
+levels_e <- levels(df$ethnicity)
+levels_o <- levels(df$occupation)
+len_df <- nrow(df)
+```
+
+***
+
+(1) Write down a two-way ANOVA model for this data. For consistency, choose the letters from $\{Y,\alpha, \beta, \mu, \epsilon\}$ and use the factor-effect form. 
+
+The 2-way anova model can be described as,
+
+$$
+Y_{ijk} = \mu + \alpha_{i} + \beta_{j} + (\alpha\beta)_{ij} + \epsilon_{ijk}
+$$
+where, 
+
+1. $Y_{ijk}$ = Response variable (Wage)
+
+2. $\mu.. = \sum_{i=1}^{a} \sum_{j=1}^{b}\frac{\mu_{ij}}{(ab)}$ = Population mean or expectation
+
+3. $\alpha_i$ = $\mu_{i.} - \mu..$ = (Cell mean for Ethnicity - Population mean)
+
+4. $\beta_j$ = $\mu_{.j} - \mu..$ = (Cell mean for Occupation - Population mean)
+
+5. $(\alpha\beta)_{ij} = \mu_{ij} - \mu_{i.} - \mu_{.j} + \mu_{..} =$ Represents the interaction terms between cells from occupation and ethnicity 
+
+6. $i = {`r levels_e`}$
+
+7. $j = {`r levels_o`}$
+
+8. $k = 1 .. `r len_df`$
+
+9. $\epsilon_{ijk} \sim^{i.i.d} N(0,\sigma^2)$  = Represents the error terms
+
+The following constraints are to be considered in the 2-way anova model. 
+
+1. $\sum_{i} \alpha_{i} = \sum_{j} \beta_{j} = 0$
+
+2. $\sum_{i=1}^{`r length(levels_e)`} (\alpha\beta)_{ij} = \sum_{j=1}^{`r length(levels_o)`} (\alpha\beta)_{ij} = 0$
+
+***
+
+(2) Obtain the main effects plots and the interaction plot. Summarize your findings.
+
+```{r fig1, fig.width=12,fig.height = 8}
+par(mfrow=c(1,2))
+plotmeans(wage ~ ethnicity, data = df, xlab = "Ethnicity", ylab = "Wage", main = "Main Effect, Ethnicity",connect = FALSE)
+plotmeans(wage ~ occupation, data = df, xlab = "Occupation", ylab = "Wage",main = "Main Effect, Occupation", connect = FALSE)
+```
+
+On observing the individual effects of __ethnicity__ and __occupation__ we can see that there is a difference in the cell means for every factor value corresponding in either of the variables. In left we can see the effect plot of ethinicity where we observe that there is a disparity in the salaries between __caucasian__ and __hispanic__ employees, caucasian employees having higher salaries than hispanic employees. However, the confidence intervals for hispanic employees is very wide making it seem like the sample size for hispanic employees may be smaller ie. unbalanced classes. 
+
+In the right graph we can see that the specific occupation is responsible for changing the mean salary. Occupations in __management__ seem to have significantly higher wages as opposed to occupations in __services__. Occupations in __technical__ seem to have the second highest wages after management.
+
+To test for the interaction term, we need to use an interaction plot
+```{r}
+interaction.plot(df$occupation, df$ethnicity, df$wage, ylab = "Wage", xlab = "Occupation", main = "Interaction plot between ethnicity and occupation", col = c("#00AFBB", "#E7B800", "#00FF00"), trace.label = "Ethnicity")
+```
+
+From the above plot we can see a consistent trend that __caucasian__ employees have higher wages in all occupation domains except in __services__.
+In the __services__ department, __hispanic__ employees seem to get paid on average more than caucasian employees. The significant difference in the means based on race and occupation is indicative of the fact that the interaction term is significant in the analysis.
+
+***
+
+(3) Fit the ANOVA model described in Part 1. Obtain the ANOVA table and state your conclusions. Are the findings here consistent with your initial assessments from Part 2?
+
+```{r warning=FALSE}
+# Fitting an anova model
+full.model <- aov(wage ~ ethnicity + occupation + occupation:ethnicity, data = df)
+summary(full.model)
+```
+
+Explaining the output of the 2-way anova model: 
+
+* Ethnicity seems to be insignificant at p-value of 0.1410 with 3 classes = [$`r levels_e`$], hence has degrees of freedom = 2. The F-value in the table is the F-statistic calculated.
+
+* Occupation seems to be significant at p-value of $\sim 0$ with 3 classes = [$`r levels_o``$], hence has degrees of freedom = 5. The F-value in the table is the F-statistic calculated.
+
+* The interaction term ethnicity:occupation seems to be insignificant with a p-value of 0.186. The degrees of freedom are calculated as $df_{interaction} = df_{ethnicity} * df_{occupation} = 10$. It seems that we could drop the interaction term based on initial assessment.
+
+```{r fig2, fig.height=10, fig.width=8}
+# Diagnostic Plots
+par(mfrow = c(2,2))
+plot(full.model)
+```
+
+From the plots we can see that t he residuals vs fitted values seem to have constant variance. However, there seems to be a high leverage point, specifically data point __243__. Also data point __171__ seems to be an outlier in the dataset but not a high leverage point. We could drop these 2 data points and see if there is any difference in the significance of the variables. From the QQ-plot, we can observe a slight right skew in the data. 
+
+We can perform the Levene's test for equal variances and then check for normality of residuals using the Shapiro-Wilk test.
+```{r}
+leveneTest(wage ~ ethnicity * occupation, data = df)
+```
+
+From above, it seems that the residuals seem to have constant variance at $\alpha = 0.05$. 
+
+```{r}
+shapiro.test(aov(wage ~ ethnicity + occupation + occupation:ethnicity, data = df)$residuals)
+```
+
+From the above test we can also conclude that the residuals are normally distributed at $\alpha = 0.05$
+
+The results obtained dont seem to be consistent with our findings from the plot where it seems that the variable __ethnicity__ and their interaction terms with occupation seems to be significant but the fitted model suggests otherwise. 
+
+On seeing the diagnostics and the model summary we can observe that __occupation__ seems to be significant based on it's p-values however their interaction term doesnt seem to be significant. We can perform tests to see whether ethinicity is significant at a specific $\alpha$. Since removing the terms didnt make any significant changes to the model summary, for reference we'll use the entire dataset. 
+
+***
+
+(4) Carry out a test to decide if the  effect of ethnicity is present on the full data set, at the significance level $\alpha=0.01$. 
+
+In order to check whether the effect is significant we can conduct a F-test.
+
+$H_0: \alpha_i = 0 , ∀ i \in [1,3]$
+
+$H_a:$ not all  $\alpha_i = 0$
+
+The testing condition is that we reject $H_0$ if $P(F^* > F_{critical}) \leq \alpha$
+
+The F-statistic is calculated as: 
+$$
+F^* = \frac{MS(Ethnicity)}{MSE} = \frac{77.7/2}{10176.2/515} = `r (77.7/2)/(10176.2/515)`
+$$
+
+The critical value obtained at $\alpha = 0.01 = F_{`r length(levels_e) - 1`,`r (len_df-1) *length(levels_e) * length(levels_o)`} = `r qf(1-0.01, 2,9594)`$
+
+Since the obtained $F^* < F_{critical}$, we can accept the null hypothesis $H_0$ and reject the alternate $H_a$. This implies that there is no effect of the ethnicity in the mean wages of employees.
+
+***	
+
+(5) For this part and the next, assume that the occupations have been selected randomly. Write down an appropriate ANOVA model that is additive in the factors and explain the terms in the model.
+	
+The 2-way anova model that could be fit here can be described as:
+
+$$Y_{ijk} = \mu_{..} + \alpha_{i.} + \beta_{.j} + \epsilon_{ijk}$$ 
+
+with the same variable definitions as mentioned in the Question 1 such that 
+
+$$
+\sum_i \alpha_i = 0 
+$$
+
+$$
+\epsilon_{ijk} \sim N(0,\sigma^2)
+$$
+
+where, 
+
+1. $Y_{ijk}$ = Response variable (Wage)
+
+2. $\mu.. = \sum_{i=1}^{a} \sum_{j=1}^{b}\frac{\mu_{ij}}{(ab)}$ = Population mean or expectation
+
+3. $\alpha_{i.}$ = $\mu_{i.} - \mu..$ = (Cell mean for Ethnicity - Population mean)
+
+4. $\beta_{.j} \sim^{i.i.d} N(0,\sigma^2_{\beta})$ 
+
+5. $i = {`r levels_e`}$
+
+6. $j = {`r levels_o`}$
+
+7. $k = 1 .. `r len_df`$
+
+Since we have mixed effects, $E[Y_{ijk}] = \mu_{..} + \alpha_{i}$, where $\alpha_i$ shows up because its a fixed effect. Also, $\epsilon_{ijk}$ and $\beta_j$ are pairwise independent. 
+
+
+```{r fig4, fig.height=10, fig.width=8}
+# Fitting a model only with the additive terms
+options(contrasts = c("contr.treatment", "contr.poly"))
+reduced.model <-aov(wage ~ ethnicity + occupation, data = df)
+summary(reduced.model)
+
+```
+
+From the above table output we can conclude that ethnicity does not seem to be significant since it doesnt have any effect on our response variable __Wage__, while occupation appears to be significant ie. a particular occupation has effect on the mean salaries.
+
+***
+
+(6) Assuming that the model in Part 5 is appropriate, obtain an estimate of the proportion of variability that is due to variability in occupation.
+	
+```{r}
+summary(lmer(wage ~ ethnicity + (1|occupation), data = df))
+```
+	
+The ratio of variances = $`r 6.205/(21.76+6.205)`$
+	
+Another metric is given by, 
+$$
+	\frac{s^2_{\mu}}{(s^2_{\mu} + MSE)}
+$$
+	
+where $s^2_{\mu} = MSTR - MSE/n$ from the ANOVA model fitted.
+
+```{r}
+s2_mu <- (491.7 - 21.8)/534
+s2_mu/(s2_mu + 21.8)
+```
+
+One way of determining would be to find the partial $R^2$ for the model.
+
+That is given by 
+$$
+R^2_{partial} = \frac{SSE_{reduced} - SSE_{full}}{SSE_{reduced}}
+$$
+
+```{r}
+model.eth <- aov(wage ~ ethnicity, data = df)
+model.no_interact <- aov(wage ~ ethnicity + occupation, data = df)
+
+reduced_sse <- model.eth %>% tidy() %>% filter(term == "Residuals") %>% select(sumsq) %>% pull()
+
+full_sse <- model.no_interact %>% tidy() %>% filter(term == "Residuals") %>% select(sumsq) %>% pull()
+
+partial_r2 <- (reduced_sse - full_sse)/reduced_sse
+```
+
+From the calculations, we get $R_{partial}^2 = `r partial_r2`$
+
+Another way is to determine, 
+
+
+Another way to estimate of the proportion of variability, $\omega^2$ is given as ,
+
+$$\omega^2 = \frac{SS_{occupation} - df_{ocupation} MS_{error}}{SS_{occupation} + MS_{error}} = \frac{2231 - 5(10425/524)}{2231 + (10425/524)} = `r (2231 - 5*(10425/524))/(2231 + (10425/524))`$$
+*** 
+
+## Acknowledgement {-}
+Help taken from the team mates assigned in the roster. 
+
+Resources accessed for the assignment: 
+
+1.  For $\omega^2$ https://onlinestatbook.com/2/effect_size/variance_explained.html
+
+## Session information {-}
+```{r}
+sessionInfo()
+```

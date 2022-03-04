@@ -1,0 +1,308 @@
+---
+title: "The STAR Project"
+author: "Jay Bendre, 920211348"
+date: "01-16-2022"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+library(AER)
+library(dplyr)
+library(psych)
+library(ggplot2)
+library(lindia)
+library(GGally)
+library(stats)
+library(gplots)
+library(car)
+library(knitr)
+data(STAR)
+```
+
+
+# Abstract 
+Using the data gathered in The Student/Teacher Achievement Ratio (STAR), we explore the application of a two-way ANOVA model in quantifying the effectiveness of the program in improving the overall grades for students in the first grade. The main aim is to get insights into the dataset and try and figure out how well did reducing the class sizes help in improving the grades of the students involved.
+
+
+# Introduction
+The current world is extremely competitive with a sense of competition felt by students in grades as early as their second or third grade. Almost all kindergarten students nowadays have to go through more academic instruction as opposed to creative routes like music and art, engulfing most of their time in attending to academic worksheets. From a study conducted in 2016 by the University of Virginia, about 62\% of the 2700 teachers surveyed thought that the students needed to know the alphabet before enrolling to the kindergarten ([Moyer, M. W. , 2020, April 17 ](https://www.nytimes.com/2020/04/17/parenting/early-childhood-education-demands.html)).  
+
+Institutions have been trying various methods to find methods in improving the efficacy of their education system and getting an overall higher performing class - to assure a better chance of success in the industry later on. One of such studies was conducted from 1985 - 1989 by the State department of Education backed by the Tennessee General Assembly ([Imbens, G., & Rubin, D. ,2015](https://dataverse.harvard.edu/dataset.xhtml?persistentId=hdl:1902.1/10766)). The main aim of this study was to check whether having a smaller class size is effective in improving the overall grades of the students in kindergarten and continued through third grade. By going through with this study, it would help in understanding the effectiveness of the one to one attention and a smaller class size and its correlation in improvement of the grades. The STAR study also analyzes the long term effects of this in the Lasting Benefits Study (LBS) ([92 - files.eric.ed.gov]( https://files.eric.ed.gov/fulltext/ED354992.pdf )) by considering a sub-sample of the students considered in the project STAR. In this study we try to answer 2 of the following questions:
+
+1. Do people in classes with small sizes have any effect in the math scores of students in 1st grade?
+
+2. Does the average score of a particular class type have a higher mean than the others?
+
+To answer the above questions, we follow the structure mentioned here: First, we conduct exploratory data analysis in order to verify assumptions that need to be met to conduct the required ANOVA analysis. Next we fit a 2-way ANOVA model to study the effect of students in the first grade by subsetting the entire dataset. We then shift gears by checking the statistical significance of all the results obtained from the model by hypothesis testing. We conduct tests to check for equal variances and normality. Later we conduct Tukey Test to check whether the mean of a particular class type is greater than all others.
+ 
+# Background 
+The dataset to be studied is imported using the <code>AER</code> library. It consists of the public access dataset used in the STAR project and consists of many demographic variables and variables describing the teachers qualifications and the math scores obtained in various class types.  Over 7000 students in 79 schools were randomly assigned to one of the following three interventions: small class (13-17 Students), regular class (22-25 Students) and regular-with-aide class (22-25 students with a full-time teacher's aide). The following table below describes all the variables important to the study. 
+
+```{r echo = FALSE, paged.print=TRUE}
+var_names <- c("math1","school1","schoolid1","lunch1","star1")
+var_type <- c("Quantitative","Indicator","Quantitative","Indicator","Indicator")
+var_desc <- c("Total scaled math scores - also the Response variable","Indicator for the region of school","Unique identifier for the school","Indicator for whether school offers free lunch","Indicator for all types of classes Regular, Regular+aide and Small")
+
+var_desc = data.frame(
+  var_names,
+  var_type,
+  var_desc
+)
+
+kable(var_desc, col.names= c("Variable Names","Variable Type","Variable Description"), caption = "Important variables used in the study")
+```
+
+
+
+# Descriptive analysis 
+
+#### Getting a preview into the dataset
+```{r}
+# Preview of the dataset
+STAR %>% head(5)
+
+# Looking at all the columns
+colnames(STAR)
+
+# List of columns possibly relevant to analyzing only grade 1 math scores
+
+new_colnames <- c("gender","ethnicity","star1","read1","math1","lunch1","school1","degree1","ladder1","experience1","tethnicity1","system1","schoolid1")
+
+# Creating new dataset with all variables related to grade 1
+df <- STAR %>% select(all_of(new_colnames))
+
+df %>% head(5)
+```
+
+#### Looking at missing values
+We know that missing values in star1 just implies that they didnt attend any STAR classes
+
+Also there is no point in looking at rows were the total scaled math scores are 0 so the point is to get rid of all the rows in the __'math1'__ column and check for
+
+```{r}
+df <- df %>% filter(!is.na(math1))
+
+describe(df)
+```
+
+#### Visualization of data to gain more insights into data
+
+1. Looking at average mean scores based on the star variable
+
+```{r}
+ggplot(df, aes(x = star1, y = math1, fill = gender)) + geom_boxplot() + xlab("Type of Classes") + ylab("Total Scaled Math Score") + ggtitle("Total Scaled Math Scores and its contrast with the STAR program") + geom_hline(yintercept = mean(df$math1), linetype = "dashed", color = "red")+ geom_text(aes(3.5,mean(math1),label = "Mean",vjust = -1)) + theme_minimal() 
+```
+
+Looking at the above plot we can see that there is no significant difference in the mean between male and female students. In contrast to the population mean ie total mean across all types of classes, the average mean of __small__ class size is higher than all other class types ie. regular and regular with aide. Furthermore it can be seen that the classes with aide ie. full time professor available for aide perform better than regular classes.
+
+2. Since __math1__ is supposed to be the response variable for the model its important to see if the response variable is following a normal distribution which we do using a histogram. 
+
+```{r}
+ggplot(df, aes(x = math1)) + geom_histogram(binwidth = 10) + xlab("Total Scaled Math score") + ylab("Frequency") + geom_vline(xintercept = mean(df$math1), linetype = "dashed", color = "red") + ggtitle("Histogram plot of the scaled math score") + theme_minimal() + theme(plot.title = element_text(hjust = 0.5))
+```
+
+We can see that there is some semblance of normality that the response variable in the currenty study seems to follow. But in order to confirm whether any transformations are required, we could run it through a boxcox transformation and confirm our suspicion of whether the response truly requires any sort of transformation or not.
+
+3. We can check whether the incentive of a free lunch is enough for increasing the average grades of the students based on the type of class  
+
+```{r}
+ggplot(df, aes(x = star1, y = math1, fill = lunch1)) + geom_boxplot() + xlab("Type of Classes") + ylab("Total Scaled Math Score") + ggtitle("Total Scaled Math Scores and its contrast with the STAR program") + geom_hline(yintercept = mean(df$math1), linetype = "dashed", color = "red")+ geom_text(aes(3.5,mean(math1),label = "Mean",vjust = -1)) + theme_minimal() 
+```
+
+There doesnt seem to be any effect of the incentive of getting a free lunch and the hypothesis of it resulting in higher scores. Infact we can see that, when offered a free lunch, the mean scores are significantly lesser than the non free lunch. 
+
+4. Looking at the scores based on every school currently in the dataset.
+
+```{r}
+ggplot(df, aes(x = star1, y = math1, fill = school1)) + geom_boxplot() + xlab("Type of Classes") + ylab("Total Scaled Math Score") + ggtitle("Total Scaled Math Scores and its contrast with the STAR program") + geom_hline(yintercept = mean(df$math1), linetype = "dashed", color = "red")+ geom_text(aes(3.5,mean(math1),label = "Mean",vjust = -1)) + theme_minimal()
+```
+
+There necessarily isnt a distinctive rule that could be observed from the above plot. We can see that in general regardless of the type of class its been part of, the average scores are lower in the schools located in the inner-city as opposed to schools belonging to other areas. However among the other 3 regions ie. suburban, rural and urban we dont see a consistent pattern across all 3 class types.
+
+5. Looking at pairwise relationships between variables
+
+Since the study only involves knowing about the school indicator and star indicator the plot would only be talking about the scaled math scores and the above two indicators.
+
+```{r fig1, fig.height= 10, fig.width= 10}
+ggpairs(df %>% select(c("math1","school1","star1")))
+```
+
+From the above plot we can observe that the study involves more number of schools belonging in the rural regions as opposed to in the other regions. We can also see that the response variable __math1__ follows normal distribution across all types of schools and across all types of classes, making it suitable for analysis.
+
+6. Looking at the main effects plot to see the difference in the means between any class size.  
+
+```{r fig2, fig.height=6, fig.width = 10}
+par(mfrow = c(1,2))
+plotmeans(math1 ~ star1, xlab = "Class Types", ylab = "Total Scaled Math Scores", data = df, main = "Main Effects Plot", connect = FALSE)
+plotmeans(math1 ~ schoolid1, xlab = "Schools", ylab = "Total Scaled Math Scores", data = df, main = "Main Effects Plot", connect = FALSE)
+
+```
+
+We can see that the mean of the students in the small class type is significantly higher than the other two class types, which could be indicative of small class size's effectiveness in improving the performance of the students involved in the STAR projects initiative. We can also see that different schools have different means which was kind of expected. 
+
+# Inferential analysis 
+
+To conduct analysis, the best option to understand the effects of the indicators 'schoolid1' and 'star1' is to fit a 2-way ANOVA model. T he two-way analysis of variance (ANOVA) is an extension of the one-way ANOVA that examines the influence of two different categorical independent variables on one continuous dependent variable. The two-way ANOVA not only aims at assessing the main effect of each independent variable but also if there is any interaction between them ([Statistical Methods for Research II - github pages](https://chenshizhe.github.io/STA207W2020/)). A 2 way anova model is given as the following:
+
+$$
+Y_{ijk} = \mu + \alpha_{i} + \beta_j + \epsilon_{jk}
+$$
+
+where, 
+
+1. $i$ represents the class type 
+
+* $i = 1$ : small class type 
+* $i = 2$ : regular class type
+* $i = 3$ : regular + aide class type
+
+2. $j$ represents the school ids
+
+3. $k$ represents the number of observations in the dataset.
+
+4. $Y_{ijk}$ represents the total scaled math scores. 
+
+5. $\alpha_{i} = \mu - \mu_{i}$ represents the difference in population mean - sample mean of a particular class type.
+
+6. $\beta_{i} = \mu - \mu_{i}$ represents the difference in population mean - sample mean of different schools.
+
+7. $\epsilon_{ijk}$ represents the error. 
+
+#### Fitting the Model
+We use the <em>aov()</em> function to fit the above suggested model. 
+```{r}
+model <- aov(math1 ~ star1 + schoolid1, data = df)
+summary(model)
+```
+
+From the above ANOVA model we can see that the P-value is significant at significance level $\alpha = 0.05$. 
+
+To note that due to the large number of schoolids it would not be feasible to report all the possible coefficients for schoolids. 
+
+]
+# Sensitivity analysis 
+
+In sensitivity analysis, we can check for the model diagnostics by looking at a few diagnostic plots. These help in understanding attributes regarding the residuals of the model and whether they violate the model assumptions. Lets look at the plots.
+
+```{r}
+par(mfrow = c(2,2))
+plot(model)
+```
+
+Following can be seen from the above plots:
+
+* Looking at the $Residuals$ v/s $FittedValues$ we can see that the overall variance seems to be constant throughout. The strip-like distribution is just the effect of indicator variables which causes data points to stack up on a particular factor value. This makes it important to check whether the variances remain the same across all the levels of the factors which is handled later in the study using Levene's Test ([Levene’s Test - Binghamton University]( https://biotoolbox.binghamton.edu/Biostatistics/Biostatistics%20Student%20Tutorials/Levene%20Test/Levene.pdf )).
+
+* Next the QQ-plot suggests that the residuals follow a normal distribution. There doesnt seem to be any visible skew in the data. We later check this using the Shapiro - Wilk and Kolmogorov - Smirnov Test. 
+
+
+One of the model assumptions is to check whether the residuals terms are normally distributed. The residuals are generally the error in the actual and predicted value of the response variable (in this case the total scaled math scores). These residuals need to be normally distributed so that we can make accurate inferences from the model. Lets check for the normality of the residuals using the Shapiro Wilke Test ([Shapiro-Wilk Test. Shapiro-Wilk Test - an overview]( https://www.sciencedirect.com/topics/psychology/shapiro-wilk-test )). 
+
+In a Shapiro Wilk Test, the null hypothesis $H_0$ states that the population to be tested follows a normal distribution meanwhile the alternate hypothesis $H_a$ states that the population doesnt comply with the normal distribution and could be any other distribution. However, since the sample size is greater than 5000, R doesnt allow to conduct a Shapiro Wilk Test. The alternative to that is Kolmogorov-Smirnov Test which has the same setup as the Shapiro-Wilk Test.
+
+```{r warning=FALSE}
+ks.test(model$residuals,'pnorm')
+```
+
+Since the p-value is significant at $\alpha = 0.05$ we can conclude that the residuals do not follow normal distribution. Lets look at the distribution of the residuals.
+
+```{r}
+hist(model$residuals)
+```
+
+From the above plot we can see that the residuals seem to be normally distributed. This an example of when the distribution may not be perfectly normal even though their distribution seems to be normal.
+
+Next, to check for equal variances among the groups we need to check using the levennes test [[6]( https://biotoolbox.binghamton.edu/Biostatistics/Biostatistics%20Student%20Tutorials/Levene%20Test/Levene.pdf )]. We assume that samples from all the groups are independent while conducting the Levene's Test. The null hypothesis $H_0$ states that there is no difference in the variances across all the groups ie. $\sigma_{1} = \sigma_{2} = .... =\sigma_{n}$ for n groups. The alternate hypothesis $H_a$ states that none of the variances are the same. If the P-value is less than $\alpha$ we can reject $H_0$. Assuming $\alpha = 0.05$ lets conduct the Levene's Test.
+
+```{r}
+leveneTest(math1 ~ star1 * schoolid1, data = df)
+```
+
+Since the p-value in the test is less than $\alpha$ we can conclude that the variances across all groups are not equal. It could be due to uneven distribution of the data points across all groups and also contribution of the variables effect on the scaled scores.
+
+Now coming to answering the questions first we need to check if the means across all groups remains the same or not using a F-test. 
+
+Null Hypothesis $H_0: \mu_{small} = \mu_{regular} = \mu_{regular + aide}$
+
+Alternate Hypothesis $H_a:$ Not all $\mu_{i}$ are the same.
+
+Let significance level = $\alpha = 0.05$
+
+The testing condition in this case is defined as: We can reject the null hypothesis if at given significance level $\alpha$ ,  
+
+$$
+F^* > F(1-\alpha, r-1,n_T-r)
+$$
+
+In the given problem, $r = 3$ and $n_T = 6600$
+
+We conduct a F-test to check for the above hypothesis. The F statistic is defined as: 
+
+$$
+F^* = \frac{MSTR}{MSE} = \frac{\frac{SSTR}{r-1}}{\frac{SSE}{n_T-r}}
+$$
+
+Lets have a quick look at the ANOVA table again,
+```{r}
+summary(model)
+```
+
+From the anova table we get the value of $F^* = \frac{97538}{1448} = 67.37$
+
+The critical value of $F = `r qf(1-0.05,2,6600-3)`$
+
+Since the $F^* > F$ we can reject the null hypothesis that the means of all class types are same. This was also backed by the main effects plot we saw in the descriptive analysis section where we can see the mean of small class size being greater than others. 
+
+
+Now lets check if the mean of a specific group is more than the mean of others. In order to do so we use the Tukey test ([7.4.7.1. Tukey's method](https://www.r-graph-gallery.com/84-tukey-test.html)). Tukey test is a single-step multiple comparison procedure and statistical test. It is a post-hoc analysis, what means that it is used in conjunction with an ANOVA.
+
+It allows to find means of a factor that are significantly different from each other, comparing all possible pairs of means with a t-test like method.
+
+The null hypothesis $H_0$ checks for whether the difference between 
+
+```{r}
+TukeyHSD(aov(math1 ~ star1, data = df), conf.level = 0.95)
+```
+
+From the above result we can see that all the results are significant at $\alpha = 0.05$ as all the p-values are lower than alpha. By this we can conclude that the mean of class __small__ is always greater than the remaining two classes ie. __regular__ and __regular+aide__ . We can also conclude that __regular+aide__ has a higher mean than __regular__.
+
+Now it may seem important to check for interaction terms, it is also important to note that we would be estimating roughly 720 coeffcients which may lead to improper results. 
+
+# Discussion 
+
+To summarise what we saw in this study, we were able to successfully answer both the main questions. By fitting an anova model with the schoolids and the class types we got a model which indicated that both the variables are significant in the total scaled math scores. It makes sense that the school ids came as significant because the translation of that would be that depending on the school , the services provided and the environment at the school, the average score would differ. But the main takeaway is that a small class size will lead to larger average scores as opposed to other class types. This was compared and proven using a Tukey Test in the sensitivity analysis section. From this we can infer that due to a smaller class and the more 1:1 attention of the professor would lead to a better performing class as opposed to even a regular class with a constant aide being provided to class. However, the current model looks at every specific school id and that may lead to noise in the interpretation of the results. A better option would be to find a grouping metric for all the school ids maybe based on states or the funding being provided by the government and then study how effectively has the funding being used with the STAR programme and its correlation with the better performance of the class. Further, A look into  the lasting effect of this in the future and potential career choices and whether having a small class at an older age would also have the same effect as it had on the lower grades. The LBS study conducted with the STAR project is something to dwell into and explore in the future and study the prolonged effects of the STAR programme. 
+
+# Acknowledgement {-}
+All help received in the project was obtained from the teammates assigned in the roster, Professor Shihzhe Chen and the TA's of the course STA 207.
+
+# Reference {-}
+
+Moyer, M. W. (2020, April 17). Early education is more demanding than ever, and experts have concerns. The New York Times. Retrieved January 20, 2022, from https://www.nytimes.com/2020/04/17/parenting/early-childhood-education-demands.html 
+
+ Imbens, G., & Rubin, D. (2015). Stratified Randomized Experiments. In Causal Inference for Statistics, Social, and Biomedical Sciences: An Introduction (pp. 187-218). Cambridge: Cambridge University Press. doi:10.1017/CBO9781139025751.010
+
+92 - files.eric.ed.gov. (n.d.). Retrieved January 20, 2022, from https://files.eric.ed.gov/fulltext/ED354992.pdf 
+
+
+Statistical Methods for Research II - github pages. (n.d.). Retrieved January 21, 2022, from https://chenshizhe.github.io/STA207W2020/ 
+
+Shapiro-Wilk Test. Shapiro-Wilk Test - an overview | ScienceDirect Topics. (n.d.). Retrieved January 21, 2022, from https://www.sciencedirect.com/topics/psychology/shapiro-wilk-test 
+
+Levene’s Test - Binghamton University. (n.d.). Retrieved January 21, 2022, from https://biotoolbox.binghamton.edu/Biostatistics/Biostatistics%20Student%20Tutorials/Levene%20Test/Levene.pdf 
+
+7.4.7.1. Tukey's method. (n.d.). Retrieved January 21, 2022, from https://www.itl.nist.gov/div898/handbook/prc/section4/prc471.htm 
+
+# Session info {-}
+
+<span style='color:blue'>
+Report information of your `R` session for reproducibility. 
+</span> 
+
+
+```{r}
+sessionInfo()
+```
