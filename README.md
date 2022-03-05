@@ -14,4 +14,4 @@ git clone https://github.com/jaydbendre/STA207.git
 
 3. Open the Rproj file in R Studio ![Download Link here](https://www.rstudio.com/products/rstudio/download/). 
 
-4. In order to run the program open the ``Draft Report Working.rmd`` file and run every individual cell or simply knit the file to view all the outputs.
+4. In order to run the program open the ``Draft Report/Draft Report Final.rmd`` file and run every individual cell or simply knit the file to view all the outputs.
