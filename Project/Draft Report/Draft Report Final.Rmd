@@ -222,8 +222,6 @@ v_relief <- ggplot(us_data, aes(x = as.factor(vaccine_availability), y = CFR, fi
 grid.arrange(i_support, i_travel, v_relief, d_relief, nrow = 2, ncol = 2)
 ```
 
-
-
 We can clearly see that there is an reduction in the CFR in case of the international travel restrictions and debt/contract relief. There seems to be no significant difference in the CFR before and after the availability of the vaccine. Interestingly, the CFR surprisingly increases before and after the introduction of the income support. This can be attributed to people trying to stock up on resources due to the financial support provided by the Federal government. 
 
 We can look at also the various CFR trends that are generated based on all the countries being studied in this project. The figure below shows the trends using a line plot with respect to the timestamp.

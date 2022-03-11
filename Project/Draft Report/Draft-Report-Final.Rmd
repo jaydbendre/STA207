@@ -1,0 +1,752 @@
+---
+title: "Studying the effect of mandates using Panel Regression"
+author: "Jay Bendre"
+date: "03/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(knitr)
+library(Hmisc)
+library(kableExtra)
+library(lubridate)
+library(foreign)
+library(car)
+library(plm)
+library(Cairo)
+library(sjPlot)
+library(gridExtra)
+library(plotly)
+library(stargazer)
+```
+
+```{r message=FALSE, include=FALSE, results="hide"}
+# Loading the datasets being used 
+
+covid <- read_csv("https://covid19.who.int/WHO-COVID-19-global-data.csv")
+
+oxford <- read_csv("OxCGRT_latest.csv")
+
+# Selecting the neccessary variables from the dataset
+oxford <- oxford %>% select(c("Date","CountryName","C1_School closing", "C2_Workplace closing", "C6_Stay at home requirements", "C8_International travel controls", "E1_Income support", "E2_Debt/contract relief", "H3_Contact tracing", "H7_Vaccination policy", "V2A_Vaccine Availability (summary)"))
+
+covid %>% head()
+
+oxford %>% head() 
+```
+
+
+```{r message=FALSE, include=FALSE, results="hide"}
+# Handling for variable types in the dataset
+
+covid$Country_code <- as.factor(covid$Country_code)
+covid$WHO_region <- as.factor(covid$WHO_region)
+covid$Country <- as.factor(covid$Country)
+# Looking for missing values in the dataset and decide a 
+# strategy to handle it
+sapply(covid, function(x) sum(is.na(x)))
+
+# We observe that for no country code we may still have corresponding country information so we could either use the country code or the country name, it wont change the analaysis to be conduted
+
+covid <- covid %>% select(-c(Country_code))
+```
+
+```{r message=FALSE, include=FALSE, results="hide"}
+# Performing descriptive analysis on the available data
+summary(covid)
+summary(oxford)
+```
+
+```{r message=FALSE, include=FALSE, results="hide"}
+# Generating the CFR variable 
+# CFR is described as cumulative deaths/cumulative cases
+cfr <- function(x){
+	if(x[1]== 0){
+		return(0)
+	}
+	else
+	{
+		return(x[2]/x[1])
+	}
+}
+
+covid$CFR <- apply(covid[,c("New_cases","New_deaths")],1,cfr)
+```
+
+
+## 1. Introduction
+
+Covid-19 has managed to put this world to a complete stop and continues to be a thorn in our daily lives. Every day new variants and corresponding mandates for damage control result in low rates of cases and deaths. According to Stephanie Soucheray from CIDRAP, the covid cases have dropped by 40\% \cite{CIDRAP} in the last week alone from the first week of February to the second week of February. This reduction has led to the relaxation of the mask mandates and other mandates by various states across the US. 
+
+According to Viviene walt, the introduction of covid passports being compulsory in a few countries has increased the overall vaccination rate in countries like France, Italy, Germany and Denmark. \cite{walt_2021}  Just the introduction of this rule led to increased vaccination rates 20 days before the anticipated implementation, with a lasting effect for upto 40 days.
+
+It is interesting to check for the effect of these mandates on the overall case fatality rate (CFR) whether they truly have been effective in slowing down the extent of the spread of the virus. Various countries employed policies on a varying timeline, for this study we look at the top 10 most populous countries ie. United States of America, India, China, Indonesia, Pakistan, Nigeria, Brazil, Bangladesh, Russia, and Mexico. The main question we wish to answer is to look at how the closing of workplaces, banning international travel, and financial compensations provided by the governments like debt reliefs affected reducing the CFR. 
+
+The analysis occurs only pre and post implication of the mandates, we do not look at the various phases of the same. We look at the effect of the introduction of various mandates and their immediate effect on the CFR.
+
+
+This report is organized as follows: We first look at all the datasets available and select only the top 10 countries based on population. After necessary preprocessing, we check for any kind of transformation required for the Case Fatality Rate. We check whether all conditions required for fitting the panel regression model \cite{panel_regression} as well as an ANOVA model are met by conducting various statistical tests. Next, we look at the model diagnostics to get insights regarding the effectiveness of the particular mandate in the study. Further we can choose which model seems most appropriate in describing the situation.
+
+## 2. Datasets 
+
+To answer the above questions, we needed data sets able to describe not only the deaths and the cases but also establish the timeline for all the mandates being implemented and combine them together for the most effective result for the analysis conducted in the later parts of the report. We use data from two main sources for this study: 
+
+#### a. WHO Covid Data ([WHO Data](ttps://covid19.who.int/WHO-COVID-19-global-data.csv))
+
+The data obtained is gathered from the WHO Health Emergency Dashboard \cite{who_covid}. It is an open-source dataset consisting of data pertaining to the number of cases and deaths that have occured over the past 2 years and arranged in a time-series capacity. 
+The table below shows all the important variables important in the dataset.
+
+```{r echo = FALSE, message = FALSE, paged.print = TRUE, results = 'asis'}
+var_list <- c("Date Reported", "Country Code", "Country", "WHO Region", "New Cases", "Cumulative Cases", "New Deaths", "Cumulative Deaths")
+var_type <- c("Timestamp", "Factor", "Factor", "Factor", "Quantitative","Quantitative","Quantitative","Quantitative")
+var_desc <- c("Timestamp of data collection", "Abbreviation of the Country name", "Country name", "Identifies various WHO regions", "Number of new cases", "Sum of cases till the given date", "Number of new deaths", "Sum of deaths till the given date")
+
+
+var_table <- as.data.frame(list(var_list,var_type, var_desc))
+colnames(var_table) <- c("Variable Name", "Variable Data type", "Variable Description")
+kable(var_table) %>% kable_styling(position = "center")
+```
+
+#### b. OxCGRT Dataset ([Oxford Data](https://github.com/OxCGRT/covid-policy-tracker))
+
+The Oxford Covid-19 Government Response Tracker (OxCGRT) collects systematic information on policy measures that governments have taken to tackle COVID-19. The different policy responses are tracked since 1 January 2020, cover more than 180 countries and are coded into 23 indicators, such as school closures, travel restrictions, vaccination policy. These policies are recorded on a scale to reflect the extent of government action, and scores are aggregated into a suite of policy indices. The data can help decision-makers and citizens understand governmental responses in a consistent way, aiding efforts to fight the pandemic. Few of such mandates that could be interesting to look at are summarized in the table below. 
+
+```{r echo = FALSE, message = FALSE, paged.print = TRUE, results = 'asis'}
+
+var_list <- c("Date","C1","C2","C6","C8","E1","E2","H3","H7", "V2A")
+var_type <- c("Timestamp", "Factor", "Factor", "Factor","Factor","Factor","Factor","Factor","Factor","Factor")
+
+var_desc <- c("Timestamp of data collection", "Indicator for School Closures", "Indicator for Workplace Closures","Indicator for Stay at Home order","Indicator for Internation Travel Restrictions","Indicator for Income Support","Indicator for Debt/Contract Relief","Indicator for Contact Tracing","Indicator for Vaccination Policy", "Indicator for Vaccination Availability")
+
+
+var_table <- as.data.frame(list(var_list,var_type, var_desc))
+colnames(var_table) <- c("Variable Name", "Variable Data type", "Variable Description")
+kable(var_table) %>% kable_styling(position = "center")
+```
+
+## 3. Exploratory Data Analysis
+
+The purpose of performing EDA on the datasets is to gain insights into the dataset and confirm an intuition that we can observe based on the trends we plot. We load the datasets required and clean the data so that both the above mentioned datasets can be combined based on the country and the date. Since CFR is not a variable readily available, we feature engineer the variable by the following formula:
+
+$$
+    \text{Case Fatality Rate (CFR)} = \frac{\text{New Deaths}}{\text{New Cases}}
+$$
+
+Next, a series of plots are generated to confirm our general hypothesis that the mandates have an reducing effect on the CFR. In order to visualize this we create a series of boxplots to see if the average CFR before and after introduction of the mandate. The figure below shows the boxplots of all the mandates being studied in the following report for the United States.  
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Getting a date when the value changed for the income travel ban
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`E1_Income support`)) > 0)][1]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$income_support <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$income_support <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+i_support <- ggplot(us_data, aes(x = as.factor(income_support), y = CFR, fill = as.factor(income_support))) + geom_boxplot() + xlab("Income Support") + theme_minimal()  + ylim(0,0.05)  + theme(legend.position = "none")
+
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`C8_International travel controls`)) > 0)][3]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$international_travel <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$international_travel <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+i_travel <- ggplot(us_data, aes(x = as.factor(international_travel), y = CFR, fill = as.factor(international_travel))) + geom_boxplot() +  xlab("International Travel")+  theme_minimal()  + ylim(0,0.05)  + theme(legend.position = "none")
+
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`E2_Debt/contract relief`)) > 0)][2]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$debt_relief <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$debt_relief <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+d_relief <- ggplot(us_data, aes(x = as.factor(debt_relief), y = CFR, fill = as.factor(debt_relief))) + geom_boxplot() +  xlab("Debt/ Contract Relief ") + theme_minimal() + ylim(0,0.05)  + theme(legend.position = "none")
+
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`V2A_Vaccine Availability (summary)`)) > 0)][1]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$vaccine_availability <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$vaccine_availability <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+v_relief <- ggplot(us_data, aes(x = as.factor(vaccine_availability), y = CFR, fill = as.factor(vaccine_availability))) + geom_boxplot() +  xlab("Vaccine Availability")+  theme_minimal() + ylim(0,0.05) + theme(legend.position = "none")
+
+grid.arrange(i_support, i_travel, v_relief, d_relief, nrow = 2, ncol = 2)
+```
+
+
+
+We can clearly see that there is an reduction in the CFR in case of the international travel restrictions and debt/contract relief. There seems to be no significant difference in the CFR before and after the availability of the vaccine. Interestingly, the CFR surprisingly increases before and after the introduction of the income support. This can be attributed to people trying to stock up on resources due to the financial support provided by the Federal government. 
+
+We can look at also the various CFR trends that are generated based on all the countries being studied in this project. The figure below shows the trends using a line plot with respect to the timestamp.
+
+```{r fig1, echo=FALSE, fig.width=12, }
+# Observing trends based on the CFR variable
+#1. Generating a timeseries plot for the CFR variable for US
+# Selecting countries required for analysis
+countries <- c("United States of America", "India", "China", "Indonesia", "Pakistan", "Nigeria", "Brazil", "Bangladesh", "Russia", "Mexico")
+comparision_data <- covid %>% filter(Country %in% countries)
+
+ggplot(comparision_data, aes(x = Date_reported, y = CFR, color = Country)) + geom_line() + scale_x_date(date_breaks = "1 month",date_labels = "%b %Y")+ ggtitle("Plotting various countries CFR across time") + xlab("") + ylab("CFR")+ ylim(0,0.5) + theme_minimal()+ theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+```
+```{r fig.show='hide', include=FALSE, results="hide"}
+# Trying to join both the dataframes 
+countries <- c(countries, "United States","Russian Federation")
+final_df_covid <- covid %>% filter(Country %in% countries)
+final_df_oxford <- oxford %>% filter(CountryName %in% countries)
+
+#unique(final_df_oxford$CountryName) 
+#unique(final_df_covid$Country) 
+
+final_df_oxford$CountryName <- as.factor(final_df_oxford$CountryName)
+
+final_df_covid$Country <- recode_factor(final_df_covid$Country, `Russian Federation` = "Russia")
+
+final_df_covid$Country <- recode_factor(final_df_covid$Country, `United States of America` = "United States")
+
+final_df_oxford <- final_df_oxford[!duplicated(final_df_oxford),]
+
+names(final_df_covid)[names(final_df_covid) == "Date_reported"] <- "Date"
+
+names(final_df_oxford)[names(final_df_oxford) == "CountryName"] <- "Country"
+
+# Formatting dates for Oxford dataset 
+date_format <- function(dateChange){
+	year <- substr(toString(dateChange),1,4)
+	month <- substr(toString(dateChange),5,6)
+	day <- substr(toString(dateChange),7,8)
+	date <- paste(year ,"-", month ,"-" , day, sep = "")
+	return(date)
+}
+
+final_df_oxford$Date <- sapply(final_df_oxford$Date, date_format)
+
+final_df_oxford <- final_df_oxford[complete.cases(final_df_oxford),]
+# Selecting rows upto 12/31/2021
+
+final_df_oxford <- subset(final_df_oxford, Date <= "2022-02-01")
+final_df_covid <- subset(final_df_covid, Date <= "2022-02-01")
+
+# Dropping multiple same date and day records 
+final_df_oxford <- final_df_oxford %>% arrange(Date, Country) %>% group_by(Date,Country) %>% summarise(across(everything(),last))
+
+# Merging the dataset
+final_df <- merge(final_df_covid, final_df_oxford, by = c("Date","Country"))
+final_df <- final_df[order(final_df$Country),]
+```
+
+
+In this trend, China seems to have the highest CFR in 2020 as opposed to all countries, while other countries seem to have a low CFR very close to 0. Mexico seems to have the most erratic trend for CFR with the fatality being very high from June 2020 as opposed to other countries being studied. The reason for the dip in the high CFR for China could be the very strict lockdown that was implemented during the first wave of this pandemic. The erratic nature of CFR for Mexico can be explained by the effectiveness of the mandates being implemented. Since the norms set bu the governments were not followed, the CFR could have varied as erracticly as we see in the plots. 
+
+We can also look at how the number of cases with time and its contrast with the above CFR plot. That would help us identify whether the deaths were actually reducing over time or is CFR not an appropriate response variable for this study. 
+
+```{r echo=FALSE}
+ggplot(final_df, aes(x = Date, y = New_cases , fill = Country)) + geom_bar(stat = "identity", alpha = 0.4) + ylab("New Cases(Daily)") + xlab("Date") + ggtitle("Trends of new cases for every country \n being studied") + theme_minimal() 
+```
+
+For all countries, we can very evidently observe that the cases have increased significantly however by the low CFR rates especially in the time range of June 2021 to present, we can see a spike in the number of cases, with United States having the maximum cases can be attributed to the Omicron variant. This variant had a very low fatality rate but had a high transmission rate leading to high number of cases but lesser amount of deaths. 
+
+Lastly, we can look at what the pandemic has had an effect on the entirety of the world. The map below shows the cumulative deaths till date. We can see that USA has had the maximum deaths till date followed by Brazil, India and Russia. Surprisingly, China seems to have lower deaths than other countries. 
+
+```{r echo=FALSE}
+latest_df <- final_df %>% filter(Date == "2022-02-01")
+latest_df$Country_code <- c("USA", "RUS", "BGD", "BRA", "CHN", "IND","MEX")
+fig <- plot_geo(latest_df)
+fig <- fig %>% add_trace(
+	z = ~Cumulative_deaths, locations = ~Country_code, text = ~Country, color = ~Cumulative_deaths, colors = "viridis"
+)
+fig <- fig %>% colorbar(title = "Cumulative Deaths")
+fig
+```
+
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+cols <- c("school_closing",
+																														"workplace_closing",
+																														"stay_at_home",
+																														"international_travel",
+																														"income_support",
+																														"debt_relief",
+																														"contact_tracing",
+																														"vaccination_policy",
+																														"vaccine_availability") 
+
+colnames(final_df)[9:17] <- c("school_closing",
+																														"workplace_closing",
+																														"stay_at_home",
+																														"international_travel",
+																														"income_support",
+																														"debt_relief",
+																														"contact_tracing",
+																														"vaccination_policy",
+																														"vaccine_availability") 
+```
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+relevel_vals <- function(x){
+	if(x > 0){
+		return(2)
+	}
+	else{
+		return(1)
+	}
+}
+```
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+final_df <- final_df %>% 
+	mutate(week = cut.Date(Date, breaks = "1 week", labels = FALSE))
+```
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+getmode <- function(v) {
+ uniqv <- unique(v)
+ uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+final_df_summ <- final_df %>% group_by(Country, week) %>% 
+	summarise(avg_CFR = max(CFR), debt_relief = max(debt_relief), income_support = max(income_support), vaccine_availability = max(vaccine_availability), workplace_closing = max(workplace_closing), international_travel = max(international_travel)) %>% ungroup()
+```
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+cols <- c("workplace_closing",
+"debt_relief", "income_support", "vaccine_availability", "international_travel")
+
+final_df_summ[cols] <- lapply(final_df_summ[cols], function(col) sapply(col , relevel_vals))
+final_df_summ[cols] <- lapply(final_df_summ[cols], as.factor)
+```
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+
+model1 <- plm(avg_CFR ~ vaccine_availability + income_support + debt_relief + international_travel  , data = final_df_summ, index = c("Country","week"), model = "random")
+
+library(stargazer)
+summary(model1)
+
+stargazer(model1)
+coef(model1)
+pbgtest(model1)
+```
+
+
+
+## 4. Proposed Methodology 
+
+One of the approaches to use to solve this kind of problem would be to divide the dataset into various covid waves and analyze them separately as a regression model. In econometrics this techqnique is known as a panel regression. In a panel regression setting, we divide timeseries data into acceptable samples and perform linear regression on those specific samples. The reason of choosing this method will help us analyze the CFR rate before and after implementation of a particular mandate by the Federal Governments.
+
+Panel regression is a modeling method adapted to panel data, also called longitudinal data or cross-sectional data. It is widely used in econometrics, where the behavior of statistical units (i.e. panel units) is followed across time. Those units can be firms, countries, states, etc. Panel regression allows controlling both for panel unit effect and for time effect when estimating regression coefficients.  
+Panel data regression is a powerful way to control dependencies of unobserved, independent variables on a dependent variable, which can lead to biased estimators in traditional linear regression models
+
+In general, a Panel regression equation is given by, 
+
+
+$$Y_{i,t} = X_{i,t}\beta + \alpha_i + \mu_{i,t}$$
+
+
+where,
+
+* Y = Response Variable = CFR
+
+* X = Dependent Variables = Various Mandates being studied
+
+* $\beta$ = Regression Coefficients = Should be $\leq 0$
+
+* $\alpha$ = Individual Effects
+
+* $\mu$ = Idiosyncratic Error
+
+
+#### a. Inferences from the Model 
+
+In order to fit a model, we first aggregate the data based on weekly basis and taking average of the CFR for a week. Next, we fit a panel regression model to see the effect of these variables. The table below shows the summary of the fitted model. 
+
+```{r echo=FALSE, results='asis'}
+stargazer(model1, header = FALSE, type = "html", align = TRUE)
+```
+
+One of the things that stand out is that international travel ban was not as effective in reducing the CFR but in fact results in increasing the CFR which is something thats not consistent with the boxplots we obtain in the EDA section above. Income support almost has no effect in reducing or increasing the CFR. We get the expected negative coefficients in case of vaccine availability and debt relief. Debt relief seems to have the most effect in the reduction of the CFR as opposed to vaccine availability. By introduction of the mandate, the overall effect across all countries is a reduction of 0.042. To put into context, the average average CFR is 0.0564. To put into context, this puts a 75\% reduction in the CFR. Vaccine availability brings a 34\% reduction in the CFR. 
+
+
+#### b. Model Diagnostics 
+For model diagnostics, we check for serial correlation and the normality of the residuals obtained. The plot below shows a qqplot of the residuals. 
+
+```{r echo=FALSE}
+qqPlot(model1$residuals)
+```
+
+We can see that the residuals are slightly right skewed. We can also observe outliers in the dataset however they dont seem influential. Overall the reiduals seem to follow normal distribution which has a slight right skew. 
+
+Next to check for serial correlation we use the Bruesch-Godfrey/Woolridge \cite{bgtest} test. It  is used to assess the validity of some of the modelling assumptions inherent in applying regression-like models to observed data series. In particular, it tests for the presence of serial correlation that has not been included in a proposed model structure and which, if present, would mean that incorrect conclusions would be drawn from other tests or that sub-optimal estimates of model parameters would be obtained. We also run a White's Test \cite{Whitestest}   to check for constant variances. 
+
+![hypothesis_plot](Plots\hypo_test.png)
+
+Based on the p-values obtained from the tests, we can reject the null hypothesis in both the cases. Hence the data has unequal variances and also is serially correlated with each other. Hence the model may not provide accurate insights into the effectiveness of the mandates.
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+plot(final_df_summ$avg_CFR)
+```
+
+```{r fig.show='hide', include=FALSE, results="hide"}
+resid <- model1$residuals
+fitted_vals <- model1$model[[1]] - resid
+
+ggplot() + geom_point(aes(x = fitted_vals, y = resid)) + ylim(-0.4,0.4)
+```
+
+## 6. Conclusion
+
+Based on the panel regression model we fit, we understand the effectiveness of few of the mandates being studied. To summarise the findings, we can conclude that restriction of international travel provided an unexpected result wherein the restrictions led to an increase in the case fatality rate. Income support does not seem to have any significant effect on the CFR. Noticeably, we get vaccine availability and debt relief seem to have a significant reduction in the CFR. This can be interpretted as vaccine availability led to people getting vaccinated before hand thus reducing the fatality. Similarly, debt relief could have encouraged people to work from home thus reducing the transmission rate. In the next phase, we can try and fit a better model using ANOVA model and study the effect of the mandates better and get more accurate insights. 
+
+## 7. References 
+
+Anon, Who coronavirus (covid-19) dashboard . Available at: https://covid19.who.int/WHO-COVID-19-global-table-data.csv [Accessed March 4, 2022]. 
+
+Liu, Y. et al., 2021. The impact of non-pharmaceutical interventions on SARS-COV-2 transmission across 130 countries and territories - BMC medicine. BioMed Central. Available at: https://doi.org/10.1186/s12916-020-01872-8 [Accessed March 3, 2022]. 
+
+Stephanie Soucheray | News Reporter | CIDRAP News &nbsp;| Feb 14, 2022, 2022. Covid-19 cases drop by 40% in US. CIDRAP. Available at: https://www.cidrap.umn.edu/news-perspective/2022/02/covid-19-cases-drop-40-us [Accessed March 3, 2022]. 
+
+Walt, V., 2021. Covid-19 vaccine mandates and passports work to increase jab rates-sometimes spectacularly. Fortune. Available at: https://fortune.com/2021/12/14/covid-19-vaccine-mandates-passports-increase-jab-rates-lancet-study-finds/ [Accessed March 3, 2022]. 
+
+## 8. Appendix R Codes
+
+```{r message=FALSE, results="hide"}
+# Loading the datasets being used 
+
+covid <- read_csv("https://covid19.who.int/WHO-COVID-19-global-data.csv")
+
+oxford <- read_csv("OxCGRT_latest.csv")
+
+# Selecting the neccessary variables from the dataset
+oxford <- oxford %>% select(c("Date","CountryName","C1_School closing", "C2_Workplace closing", "C6_Stay at home requirements", "C8_International travel controls", "E1_Income support", "E2_Debt/contract relief", "H3_Contact tracing", "H7_Vaccination policy", "V2A_Vaccine Availability (summary)"))
+
+covid %>% head()
+
+oxford %>% head() 
+```
+
+
+```{r message=FALSE, results="hide"}
+# Handling for variable types in the dataset
+
+covid$Country_code <- as.factor(covid$Country_code)
+covid$WHO_region <- as.factor(covid$WHO_region)
+covid$Country <- as.factor(covid$Country)
+# Looking for missing values in the dataset and decide a 
+# strategy to handle it
+sapply(covid, function(x) sum(is.na(x)))
+
+# We observe that for no country code we may still have corresponding country information so we could either use the country code or the country name, it wont change the analaysis to be conduted
+
+covid <- covid %>% select(-c(Country_code))
+```
+
+```{r message=FALSE, results="hide"}
+# Performing descriptive analysis on the available data
+summary(covid)
+summary(oxford)
+```
+
+```{r message=FALSE, results="hide"}
+# Generating the CFR variable 
+# CFR is described as cumulative deaths/cumulative cases
+cfr <- function(x){
+	if(x[1]== 0){
+		return(0)
+	}
+	else
+	{
+		return(x[2]/x[1])
+	}
+}
+
+covid$CFR <- apply(covid[,c("New_cases","New_deaths")],1,cfr)
+```
+
+```{r, results="hide", fig.show='hide'}
+# Observing trends based on the CFR variable
+#1. Generating a timeseries plot for the CFR variable for US
+# Selecting countries required for analysis
+countries <- c("United States of America", "India", "China", "Indonesia", "Pakistan", "Nigeria", "Brazil", "Bangladesh", "Russia", "Mexico")
+comparision_data <- covid %>% filter(Country %in% countries)
+
+ggplot(comparision_data, aes(x = Date_reported, y = CFR, color = Country)) + geom_line() + scale_x_date(date_breaks = "1 month",date_labels = "%b %Y")+ ggtitle("Plotting various countries CFR across time") + xlab("") + ylab("CFR")+ ylim(0,0.5) + theme_minimal()+ theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+```
+
+```{r , results="hide", fig.show='hide'}
+# Getting a date when the value changed for the income travel ban
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`E1_Income support`)) > 0)][1]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$income_support <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$income_support <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+i_support <- ggplot(us_data, aes(x = as.factor(income_support), y = CFR, fill = as.factor(income_support))) + geom_boxplot() + xlab("Income Support") + theme_minimal()  + ylim(0,0.05)  + theme(legend.position = "none")
+i_support
+
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`C8_International travel controls`)) > 0)][3]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$international_travel <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$international_travel <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+i_travel <- ggplot(us_data, aes(x = as.factor(international_travel), y = CFR, fill = as.factor(international_travel))) + geom_boxplot() +  xlab("International Travel")+  theme_minimal()  + ylim(0,0.05)  + theme(legend.position = "none")
+i_travel
+
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`E2_Debt/contract relief`)) > 0)][2]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$debt_relief <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$debt_relief <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+d_relief <- ggplot(us_data, aes(x = as.factor(debt_relief), y = CFR, fill = as.factor(debt_relief))) + geom_boxplot() +  xlab("Debt/ Contract Relief ") + theme_minimal() + ylim(0,0.05)  + theme(legend.position = "none")
+d_relief
+
+us_oxford <- oxford %>% filter(CountryName == "United States")
+dateChange <- us_oxford$Date[c(FALSE, diff(as.numeric(us_oxford$`V2A_Vaccine Availability (summary)`)) > 0)][1]
+year <- substr(toString(dateChange),1,4)
+month <- substr(toString(dateChange),5,6)
+day <- substr(toString(dateChange),7,8)
+date <- paste(year ,"-", month ,"-" , day, sep = "")
+
+us_data <- covid %>% filter(Country == "United States of America")
+# Creating 2 samples for pre and post ban of international travel
+us_data_pre_ban <- us_data %>% filter(Date_reported < as.Date(date))
+us_data_pre_ban$vaccine_availability <- 0 
+
+us_data_post_ban <- us_data %>% filter(Date_reported >= as.Date(date))
+us_data_post_ban$vaccine_availability <- 1
+
+
+# Binding together with the introduction of the indicator variable
+us_data <- rbind(us_data_pre_ban, us_data_post_ban)
+v_relief <- ggplot(us_data, aes(x = as.factor(vaccine_availability), y = CFR, fill = as.factor(vaccine_availability))) + geom_boxplot() +  xlab("Vaccine Availability")+  theme_minimal() + ylim(0,0.05) + theme(legend.position = "none")
+v_relief
+
+grid.arrange(i_support, i_travel, v_relief, d_relief, nrow = 2, ncol = 2)
+```
+
+
+```{r, results="hide", fig.show='hide'}
+# Trying to join both the dataframes 
+countries <- c(countries, "United States","Russian Federation")
+final_df_covid <- covid %>% filter(Country %in% countries)
+final_df_oxford <- oxford %>% filter(CountryName %in% countries)
+
+#unique(final_df_oxford$CountryName) 
+#unique(final_df_covid$Country) 
+
+final_df_oxford$CountryName <- as.factor(final_df_oxford$CountryName)
+
+final_df_covid$Country <- recode_factor(final_df_covid$Country, `Russian Federation` = "Russia")
+
+final_df_covid$Country <- recode_factor(final_df_covid$Country, `United States of America` = "United States")
+
+final_df_oxford <- final_df_oxford[!duplicated(final_df_oxford),]
+
+names(final_df_covid)[names(final_df_covid) == "Date_reported"] <- "Date"
+
+names(final_df_oxford)[names(final_df_oxford) == "CountryName"] <- "Country"
+
+# Formatting dates for Oxford dataset 
+date_format <- function(dateChange){
+	year <- substr(toString(dateChange),1,4)
+	month <- substr(toString(dateChange),5,6)
+	day <- substr(toString(dateChange),7,8)
+	date <- paste(year ,"-", month ,"-" , day, sep = "")
+	return(date)
+}
+
+final_df_oxford$Date <- sapply(final_df_oxford$Date, date_format)
+
+final_df_oxford <- final_df_oxford[complete.cases(final_df_oxford),]
+# Selecting rows upto 12/31/2021
+
+final_df_oxford <- subset(final_df_oxford, Date <= "2022-02-01")
+final_df_covid <- subset(final_df_covid, Date <= "2022-02-01")
+
+# Dropping multiple same date and day records 
+final_df_oxford <- final_df_oxford %>% arrange(Date, Country) %>% group_by(Date,Country) %>% summarise(across(everything(),last))
+
+# Merging the dataset
+final_df <- merge(final_df_covid, final_df_oxford, by = c("Date","Country"))
+final_df <- final_df[order(final_df$Country),]
+```
+
+```{r, results="hide", fig.show='hide'}
+ggplot(final_df, aes(x = Date, y = New_cases , fill = Country)) + geom_bar(stat = "identity", alpha = 0.4) + ylab("New Cases(Daily)") + xlab("Date") + ggtitle("Trends of new cases for every country \n being studied") + theme_minimal() 
+```
+
+```{r, results="hide", fig.show='hide'}
+latest_df <- final_df %>% filter(Date == "2022-02-01")
+latest_df$Country_code <- c("USA", "RUS", "BGD", "BRA", "CHN", "IND","MEX")
+fig <- plot_geo(latest_df)
+fig <- fig %>% add_trace(
+	z = ~Cumulative_deaths, locations = ~Country_code, text = ~Country, color = ~Cumulative_deaths, colors = "viridis"
+)
+fig <- fig %>% colorbar(title = "Cumulative Deaths")
+fig
+```
+
+
+```{r, results="hide", fig.show='hide'}
+cols <- c("school_closing",
+																														"workplace_closing",
+																														"stay_at_home",
+																														"international_travel",
+																														"income_support",
+																														"debt_relief",
+																														"contact_tracing",
+																														"vaccination_policy",
+																														"vaccine_availability") 
+
+colnames(final_df)[9:17] <- c("school_closing",
+																														"workplace_closing",
+																														"stay_at_home",
+																														"international_travel",
+																														"income_support",
+																														"debt_relief",
+																														"contact_tracing",
+																														"vaccination_policy",
+																														"vaccine_availability") 
+```
+
+```{r, results="hide", fig.show='hide'}
+relevel_vals <- function(x){
+	if(x > 0){
+		return(2)
+	}
+	else{
+		return(1)
+	}
+}
+```
+
+```{r, results="hide", fig.show='hide'}
+final_df <- final_df %>% 
+	mutate(week = cut.Date(Date, breaks = "1 week", labels = FALSE))
+```
+
+```{r, results="hide", fig.show='hide'}
+getmode <- function(v) {
+ uniqv <- unique(v)
+ uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+final_df_summ <- final_df %>% group_by(Country, week) %>% 
+	summarise(avg_CFR = max(CFR), debt_relief = max(debt_relief), income_support = max(income_support), vaccine_availability = max(vaccine_availability), workplace_closing = max(workplace_closing), international_travel = max(international_travel)) %>% ungroup()
+```
+
+```{r, results="hide", fig.show='hide'}
+cols <- c("workplace_closing",
+"debt_relief", "income_support", "vaccine_availability", "international_travel")
+
+final_df_summ[cols] <- lapply(final_df_summ[cols], function(col) sapply(col , relevel_vals))
+final_df_summ[cols] <- lapply(final_df_summ[cols], as.factor)
+```
+
+```{r, results="hide", fig.show='hide'}
+
+model1 <- plm(avg_CFR ~ vaccine_availability + income_support + debt_relief + international_travel  , data = final_df_summ, index = c("Country","week"), model = "random")
+
+library(stargazer)
+summary(model1)
+
+stargazer(model1)
+coef(model1)
+pbgtest(model1)
+```
+
+```{r, results="hide", fig.show='hide'}
+plot(final_df_summ$avg_CFR)
+```
+
+```{r, results="hide", fig.show='hide'}
+resid <- model1$residuals
+fitted_vals <- model1$model[[1]] - resid
+
+ggplot() + geom_point(aes(x = fitted_vals, y = resid)) + ylim(-0.4,0.4)
+```
